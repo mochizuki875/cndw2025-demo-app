@@ -1,0 +1,56 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: check-slsa-attestations
+spec:
+  validationFailureAction: Enforce
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: check-all-keyless
+      match:
+        any:
+        - resources:
+            kinds:
+            - Pod
+            namespaces:
+            - policy-test
+      verifyImages:
+      - imageReferences:
+        - "*"
+        attestations:  # in-toto Attestationを検証
+        - name: check-slsa-provenance
+          type: https://slsa.dev/provenance/v0.2
+          attestors:
+          - count: 1
+            entries:
+            - keyless:
+                subject: "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v*"
+                issuer: "https://token.actions.githubusercontent.com"
+                rekor:
+                  url: https://rekor.sigstore.dev
+          conditions:
+          - all: # 以下全ての条件を満たすことが検証成功の条件
+            # builder.idがslsa-github-generatorのReusable WorkflowでありvX.Y.Zタグまで指定されていること
+            - key: "{{ regex_match('^https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v[0-9].[0-9].[0-9]$','{{ builder.id}}') }}"
+              operator: Equals
+              value: true
+              message: "The builder.id must match the expected pattern."
+            # buildTypeがslsa-github-generatorのcontainer用でありvXタグまで指定されていること
+            - key: "{{ regex_match('^https://github.com/slsa-framework/slsa-github-generator/container@v[0-9]$','{{ buildType}}') }}"
+              operator: Equals
+              value: true
+              message: "The buildType must match the expected pattern."
+            # materialsにコンテナイメージのソースコードリポジトリが含まれていること
+            - key: "{{ regex_match('^git\\+https://github.com/mochizuki875/[^@]+@refs/heads/.+$', materials[0].uri) }}"
+              operator: Equals
+              value: true
+              message: "The materials must include the expected source repository."
+            # invocation.configSourceで所定のGitHubリポジトリとWorkflowが指定されていること
+            - key: "{{ regex_match('^git\\+https://github.com/mochizuki875/[^@]+@refs/heads/.+$', invocation.configSource.uri) }}"
+              operator: Equals
+              value: true
+              message: "The invocation.configSource.uri must match the expected repository."
+            - key: "{{ invocation.configSource.entryPoint }}"
+              operator: Equals
+              value: ".github/workflows/image-build.yaml"
+              message: "The invocation.configSource.entryPoint must match the expected workflow."

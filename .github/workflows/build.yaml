@@ -1,0 +1,36 @@
+name: Container Image Build with SLSA Provenance
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  # Build and push container image using reusable workflow
+  image-build:
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image-build-reuse.yaml
+    with:
+      image-registry: ghcr.io
+      image-name: ${{ github.repository }}
+    secrets:
+      ghcr_username: ${{ github.actor }}
+      ghcr_password: ${{ secrets.GITHUB_TOKEN }}
+
+  # Generate and publish SLSA provenance attestation
+  # https://github.com/slsa-framework/slsa-github-generator/tree/main/internal/builders/container
+  generate-provenance:
+    needs: 
+    - image-build
+    permissions:
+      actions: read # for detecting the Github Actions environment.
+      id-token: write # for creating OIDC tokens for signing.
+      packages: write # for uploading attestations.
+    # Use slsa-github-generator reusable workflow to generate and publish provenance
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    with:
+      image: ghcr.io/${{ github.repository }}
+      digest: ${{ needs.image-build.outputs.image-digest }}
+      registry-username: ${{ github.actor }}
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}
